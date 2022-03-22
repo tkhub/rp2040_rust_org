@@ -1,11 +1,5 @@
-//! # GPIO 'Blinky' Example
-//!
-//! This application demonstrates how to control a GPIO pin on the RP2040.
-//!
-//! It may need to be adapted to your particular board layout and/or pin assignment.
-//!
-//! See the `Cargo.toml` file for Copyright and licence details.
-
+//! UART and multicore-fifo and timer
+//! 
 #![no_std]
 #![no_main]
 
@@ -16,17 +10,23 @@ use cortex_m_rt::entry;
 // be linked)
 use panic_halt as _;
 
-// Alias for our HAL crate
-use rp2040_hal as hal;
 
 // A shorter alias for the Peripheral Access Crate, which provides low-level
 // register access
 use hal::pac;
 
 // Some traits we need
-use embedded_hal::digital::v2::OutputPin;
 use embedded_time::fixed_point::FixedPoint;
-use rp2040_hal::clocks::Clock;
+use hal::clocks::Clock;
+use hal::multicore::{Multicore, Stack};
+use hal::sio::Sio;
+use embedded_hal::digital::v2::ToggleableOutputPin;
+
+// Alias for our HAL crate
+use rp2040_hal as hal;
+
+/// 
+const CORE1_TASK_COMPLETE: u32 = 0xEE;
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -37,6 +37,40 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 /// External high-speed crystal on the Raspberry Pi Pico board is 12 MHz. Adjust
 /// if your board has a different frequency
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
+
+/// stak for core 1
+/// core1.spqwnにより任意のサイズのスタックを確保する。
+/// (core0はデフォルトで確保される)
+static mut CORE1_STACK: Stack<4096> = Stack::new();
+fn core1_task() -> !{
+    let mut pac = unsafe { pac::Peripherals::steal() };
+    let core = unsafe { pac::CorePeripherals::steal() };
+
+    let mut sio1 = Sio::new(pac.SIO);
+    let pins = hal::gpio::Pins::new(
+        pac.IO_BANK0,
+        pac.PADS_BANK0,
+        sio1.gpio_bank0,
+        &mut pac.RESETS,
+    );
+
+    let mut led_pin = pins.gpio25.into_push_pull_output();
+    // core1とcore0で鑑賞するのでdelayに使うsystickはfifoを経由する。
+    let sys_freq = sio1.fifo.read_blocking();
+    let mut delay = cortex_m::delay::Delay::new(core.SYST, sys_freq);
+    loop {
+        let fifoinput = sio1.fifo.read();
+        // word 
+        // 
+        if let Some(word) = fifoinput {
+            delay.delay_ms(word);
+            led_pin.toggle().unwrap();
+            sio1.fifo.write_blocking(CORE1_TASK_COMPLETE);
+        }
+    }
+    
+
+}
 
 /// Entry point to our bare-metal application.
 ///
@@ -49,7 +83,7 @@ const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 fn main() -> ! {
     // Grab our singleton objects
     let mut pac = pac::Peripherals::take().unwrap();
-    let core = pac::CorePeripherals::take().unwrap();
+    let _core = pac::CorePeripherals::take().unwrap();
 
     // Set up the watchdog driver - needed by the clock setup code
     let mut watchdog = hal::Watchdog::new(pac.WATCHDOG);
@@ -67,27 +101,51 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
+    let mut sio0 = hal::sio::Sio::new(pac.SIO);
 
-    // The single-cycle I/O block controls our GPIO pins
-    let sio = hal::Sio::new(pac.SIO);
+    let mut mc = Multicore::new(&mut pac.PSM, &mut pac.PPB, &mut sio0);
+    let cores = mc.cores();
+    let core1 = &mut cores[1];
+    let _test = core1.spawn(core1_task, unsafe { &mut CORE1_STACK.mem });
 
-    // Set the pins to their default state
-    let pins = hal::gpio::Pins::new(
-        pac.IO_BANK0,
-        pac.PADS_BANK0,
-        sio.gpio_bank0,
-        &mut pac.RESETS,
-    );
+    let sys_freq = clocks.system_clock.freq().integer();
 
-    // Configure GPIO25 as an output
-    let mut led_pin = pins.gpio25.into_push_pull_output();
+    // sys_freqを送信する
+    sio0.fifo.write_blocking(sys_freq);
+    const LED_PERIOD_INCREMENT: i32 = 2;
+    const LED_PERIOD_MIN: i32 = 0;
+    const LED_PERIOD_MAX: i32 = 100;
+    let mut led_period: i32 = LED_PERIOD_MIN;
+
+    let mut count_up = true;
     loop {
-        led_pin.set_high().unwrap();
-        // TODO: Replace with proper 1s delays once we have clocks working
-        delay.delay_ms(100);
-        led_pin.set_low().unwrap();
-        delay.delay_ms(500);
+        if count_up {
+            // toggle 
+            led_period += LED_PERIOD_INCREMENT;
+            if led_period > LED_PERIOD_MAX {
+                led_period = LED_PERIOD_MAX;
+                count_up = false;
+            }
+        } 
+        else{
+            led_period -= LED_PERIOD_INCREMENT;
+            if led_period < LED_PERIOD_MIN{
+                led_period = LED_PERIOD_MIN;
+                count_up = true;
+            }
+        }
+
+        // this if statement will not execute.
+        if led_period < 0 {
+            led_period = 0;
+        }
+
+        sio0.fifo.write(led_period as u32);
+        let ack = sio0.fifo.read_blocking();
+        if ack != CORE1_TASK_COMPLETE {
+            
+        }
+
     }
 }
 
