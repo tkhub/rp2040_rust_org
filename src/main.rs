@@ -16,6 +16,7 @@ use panic_halt as _;
 use hal::pac;
 
 // Some traits we need
+use core::fmt::Write;
 use embedded_time::fixed_point::FixedPoint;
 use hal::clocks::Clock;
 use hal::multicore::{Multicore, Stack};
@@ -110,6 +111,24 @@ fn main() -> ! {
 
     let sys_freq = clocks.system_clock.freq().integer();
 
+    let pins = hal::gpio::Pins::new(
+        pac.IO_BANK0,
+        pac.PADS_BANK0,
+        sio0.gpio_bank0,
+        &mut pac.RESETS,
+    );
+    let uart_pins = (
+        pins.gpio0.into_mode::<hal::gpio::FunctionUart>(),
+        pins.gpio1.into_mode::<hal::gpio::FunctionUart>(),
+    );
+    let mut uart = hal::uart::UartPeripheral::new(pac.UART0, uart_pins, &mut pac.RESETS)
+        .enable(
+            hal::uart::common_configs::_9600_8_N_1,
+            clocks.peripheral_clock.freq(),
+        )
+        .unwrap();
+    uart.write_full_blocking(b"UART TEST\r\n");
+
     // sys_freqを送信する
     sio0.fifo.write_blocking(sys_freq);
     const LED_PERIOD_INCREMENT: i32 = 2;
@@ -134,6 +153,7 @@ fn main() -> ! {
                 count_up = true;
             }
         }
+        writeln!(uart, "Period = {}\r", led_period).unwrap();
 
         // this if statement will not execute.
         if led_period < 0 {
