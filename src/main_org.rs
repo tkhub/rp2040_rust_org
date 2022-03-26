@@ -1,3 +1,4 @@
+//! Raspberry Pi Pico でLチカ (タイマーを利用)
 #![no_std]
 #![no_main]
 
@@ -82,7 +83,6 @@ fn main() -> ! {
     let mut alarm0 = timer.alarm_0().unwrap();
     let _ = alarm0.schedule(1_000_000.microseconds()); // 1秒
     alarm0.enable_interrupt(&mut timer);
-//    alarm0.enable_interrupt();
 
     // 所有権をstatic変数に移す
     // 操作はクリティカルセクション内で行う
