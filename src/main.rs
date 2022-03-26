@@ -32,10 +32,8 @@ fn TIMER_IRQ_0() {
         // 割り込みのクリアは必須 (クリアしないと割り込みハンドラが呼ばれ続ける!)
         // 必要であれば、次のアラームを設定する
         if let Some(ref mut a) = G_ALARM0.borrow(cs).borrow_mut().deref_mut() {
-            let _ = a.schedule(100_000.microseconds()); // 0.1秒
-            if let Some(ref mut t) = G_TIMER.borrow(cs).borrow_mut().deref_mut() {
-                a.clear_interrupt(t);
-            }
+            let _ = a.schedule(50_000.microseconds()); // 0.5秒
+            a.clear_interrupt();
         }
         // LEDをトグルする
         if let Some(ref mut led) = G_LED.borrow(cs).borrow_mut().deref_mut() {
@@ -81,8 +79,7 @@ fn main() -> ! {
     let mut timer = bsp::hal::timer::Timer::new(pac.TIMER, &mut pac.RESETS);
     let mut alarm0 = timer.alarm_0().unwrap();
     let _ = alarm0.schedule(1_000_000.microseconds()); // 1秒
-    alarm0.enable_interrupt(&mut timer);
-//    alarm0.enable_interrupt();
+    alarm0.enable_interrupt();
 
     // 所有権をstatic変数に移す
     // 操作はクリティカルセクション内で行う

@@ -19,4 +19,4 @@ panic-halt = "0.2.0"
 
 rp2040-hal = { git = "https://github.com/rp-rs/rp-hal", branch="main", features=["rt"] }
 rp2040-boot2 = { git = "https://github.com/rp-rs/rp2040-boot2-rs", branch="main" }
-rp-pico = "0.2.0"
+rp-pico = "0.3.0"
